@@ -42,29 +42,68 @@ popup = WebDriverWait(driver, 10).until(
     EC.presence_of_element_located((By.CLASS_NAME, "leaflet-popup-content-wrapper"))
 )
 
-print("彈出框已成功顯示！")
-
 # 點擊 "資料圖表展示" 按鈕
 data_button = driver.find_element(By.XPATH, "//button[contains(text(), '資料圖表展示')]")
 data_button.click()
 
-# # 選擇日期範圍
-# time.sleep(2)
-# date_picker = driver.find_element(By.CLASS_NAME, "vdatetime-input")
-# date_picker.click()
+# XPath 篩選條件：匹配 section.zh-TW 下未隱藏的 datetime-tool-content
+datetime_content = driver.find_element(By.XPATH, "//section[@class='zh-TW']//div[@class='lightbox-tool-type-container' and not(contains(@style, 'display: none'))]//div[@class='datetime-tool-content']")
 
-# # 設置日期（需要確保格式符合）
-# time.sleep(1)
-# date_year = driver.find_element(By.CLASS_NAME, "vdatetime-popup__year")
-# date_year.click()  # 可加進一步操作設置具體年份
-# date_confirm = driver.find_element(By.CLASS_NAME, "vdatetime-popup__actions")
-# date_confirm.click()
+# 定位目標 svg 圖標
+date_icon = datetime_content.find_element(By.CLASS_NAME, "datetime-tool-icon")
 
-# # 點擊下載 CSV 按鈕
+# 模擬滑鼠單擊行為
+action = ActionChains(driver)
+action.move_to_element(date_icon).pause(0.5).click().perform()
+
+# 設置日期（需要確保格式符合）
+date_year = datetime_content.find_element(By.CLASS_NAME, "vdatetime-popup__year")
+date_year.click()  # 可加進一步操作設置具體年份
+
+# 定位年份選擇器
+year_picker = datetime_content.find_element(By.CLASS_NAME, "vdatetime-year-picker")
+
+# 獲取所有年份項目
+year_items = year_picker.find_elements(By.CLASS_NAME, "vdatetime-year-picker__item")
+
+# 點擊目標年份
+for year_item in year_items:
+    if year_item.text.strip() == "2024":
+        print("找到年份 2024，點擊...")
+        # 點擊目標年份，模擬滑鼠單擊行為
+        action = ActionChains(driver)
+        action.move_to_element(year_item).pause(0.5).click().perform()
+        break
+
+# 定位月份選擇器
+date_date = datetime_content.find_element(By.CLASS_NAME, "vdatetime-popup__date")
+date_date.click()  # 可加進一步操作設置具體月份
+
+month_picker = datetime_content.find_element(By.CLASS_NAME, "vdatetime-month-picker")
+
+# 獲取所有月份項目
+month_items = month_picker.find_elements(By.CLASS_NAME, "vdatetime-month-picker__item")
+
+# 點擊目標月份
+for month_item in month_items:
+    if month_item.text.strip() == "1月":
+        print("找到月份 1月，點擊...")
+        # 點擊目標月份，模擬滑鼠單擊行為
+        action = ActionChains(driver)
+        action.move_to_element(month_item).pause(0.5).click().perform()
+        break
+
+############################## OK ##############################
+# 點擊下載 CSV 按鈕
 # time.sleep(2)
-# csv_button = driver.find_element(By.XPATH, "//a[contains(@href, '.csv')]")
+# csv_button = driver.find_element(By.XPATH, "//div[@class='lightbox-tool-type-ctrl-btn' and contains(., 'CSV下載')]")
 # csv_button.click()
 
-# # 等待下載完成後關閉
-# time.sleep(5)
+# # # 等待下載完成後關閉
+time.sleep(5)
+############################## OK ##############################
 driver.quit()
+
+
+# print("日期選擇器是否顯示:", date_picker.is_displayed())
+# print("日期選擇器是否可互動:", date_picker.is_enabled())
