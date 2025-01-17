@@ -6,6 +6,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 import time
+from datetime import datetime, timedelta
 
 # 使用 Service 類別
 driver = webdriver.Chrome()
@@ -86,24 +87,49 @@ month_items = month_picker.find_elements(By.CLASS_NAME, "vdatetime-month-picker_
 
 # 點擊目標月份
 for month_item in month_items:
-    if month_item.text.strip() == "1月":
-        print("找到月份 1月，點擊...")
+    if month_item.text.strip() == "12月":
+        print("找到月份 12月，點擊...")
         # 點擊目標月份，模擬滑鼠單擊行為
         action = ActionChains(driver)
         action.move_to_element(month_item).pause(0.5).click().perform()
         break
 
-############################## OK ##############################
-# 點擊下載 CSV 按鈕
-# time.sleep(2)
-# csv_button = driver.find_element(By.XPATH, "//div[@class='lightbox-tool-type-ctrl-btn' and contains(., 'CSV下載')]")
-# csv_button.click()
+# 獲取所有日期項目
+date_items = datetime_content.find_elements(By.CLASS_NAME, "vdatetime-calendar__month__day")
 
-# # # 等待下載完成後關閉
-time.sleep(5)
-############################## OK ##############################
+# 點擊目標日期
+for date_item in date_items:
+    if date_item.text.strip() == "31":
+        print("找到日期 31，點擊...")
+        # 點擊目標日期，模擬滑鼠單擊行為
+        action = ActionChains(driver)
+        action.move_to_element(date_item).pause(0.5).click().perform()
+        break
+
+# 設定初始日期和結束日期
+current_date = datetime(2024, 12, 31)  # 初始日期
+end_date = datetime(2024, 12, 29)      # 結束日期
+
+# 重複操作，下載每一天的數據直到結束日期
+while current_date >= end_date:
+
+    # 點擊下載 CSV 按鈕
+    csv_button = WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable((By.XPATH, "//div[@class='lightbox-tool-type-ctrl-btn' and contains(., 'CSV下載')]"))
+    )
+    csv_button.click()
+    print(f"日期: {current_date.strftime('%Y-%m-%d')}, CSV 下載完成")
+
+    # 等待下載完成
+    time.sleep(3)
+
+    # 點擊 "上一頁" 按鈕
+    datetime_prev = WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable((By.XPATH, "//section[@class='zh-TW']//div[@class='lightbox-tool-type-container' and not(contains(@style, 'display: none'))]//div[@class='datetime-tool-prev-next']"))
+    )
+    ActionChains(driver).move_to_element(datetime_prev).pause(0.5).click().perform()
+
+    # 更新日期
+    current_date -= timedelta(days=1)
+
 driver.quit()
-
-
-# print("日期選擇器是否顯示:", date_picker.is_displayed())
-# print("日期選擇器是否可互動:", date_picker.is_enabled())
