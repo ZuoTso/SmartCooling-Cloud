@@ -55,7 +55,7 @@ action = ActionChains(driver)
 action.move_to_element(date_icon).pause(0.5).click().perform()
 
 # Set initial date
-current_date = datetime(2024, 12, 31)
+current_date = datetime(2018, 12, 5)
 target_year = str(current_date.year)
 target_month = str(current_date.month)
 target_day = str(current_date.day)
@@ -106,19 +106,20 @@ for date_item in date_items:
         break
 
 # Set end date
-end_date = datetime(2015, 1, 1)
+end_date = datetime(2018, 9, 25)
 
 # Repeat the process to download data for each day until the end date.
 while current_date >= end_date:
+    # Wait for the download to complete
+    time.sleep(3)
+    print(f"日期: {current_date.strftime('%Y-%m-%d')}, CSV 下載")
+    
     # Click the Download CSV button
     csv_button = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.XPATH, "//div[@class='lightbox-tool-type-ctrl-btn' and contains(., 'CSV下載')]"))
     )
     csv_button.click()
-
-    # Wait for the download to complete
-    time.sleep(2)
-    print(f"日期: {current_date.strftime('%Y-%m-%d')}, CSV 下載完成")
+    time.sleep(0.5)
 
     # Click the "Previous Page" button
     datetime_prev = WebDriverWait(driver, 10).until(
