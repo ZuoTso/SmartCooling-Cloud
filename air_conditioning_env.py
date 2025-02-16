@@ -122,6 +122,9 @@ class AirConditioningEnv(gym.Env):
         self.current_index = 0  # 重新從 CSV 第一筆數據開始
         self.T_outside = self.weather_data.iloc[self.current_index]["氣溫(℃)"]
         self.AH = self.weather_data.iloc[self.current_index]["AH(g/m³)"]
+        # 回傳初始狀態 (室內溫度, 室外溫度, 累計耗電)
+        return np.array([self.T_ac, self.T_outside, self.energy_consumption], dtype=np.float32)
+
 
     def render(self, mode="human"):
         """ 可選的環境視覺化方法 """
