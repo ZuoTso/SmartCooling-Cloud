@@ -4,39 +4,45 @@ import numpy as np
 import pandas as pd
 
 class AirConditioningEnv(gym.Env):
-    def __init__(self, csv_path):
+    def __init__(self, csv_path, render_mode=None):
         super(AirConditioningEnv, self).__init__()
+        self.render_mode = render_mode
 
-        # 讀取 CSV 檔案
+        # read CSV
         self.weather_data = pd.read_csv(csv_path)
 
-        # 確保 CSV 包含 T_outside 和 AH
+        # make sure CSV included T_outside and AH
         if "氣溫(℃)" not in self.weather_data.columns or "AH(g/m³)" not in self.weather_data.columns:
             raise ValueError("CSV 檔案缺少必要的欄位 '氣溫(℃)' 和 'AH(g/m³)'！")
 
 
-        # 狀態空間：室內溫度, 室外溫度, 冷氣強度, 耗電量
+        # State space: indoor temperature, outdoor temperature, power consumption
         self.observation_space = spaces.Box(
-            low=np.array([16, -1, 0]),  # 溫度最低 16°C，室外最低 -1°C，耗電最小 0
-            high=np.array([30, 40, 3000]),  # 溫度最高 30°C，室外最高 40°C，累計耗電 3000Wh
+            low=np.array([16, -1, 0], dtype=np.float32),  # Minimum ac temperature 16°C, outdoor minimum -1°C, minimum power consumption 0
+            high=np.array([30, 40, 3000], dtype=np.float32),  # Maximum ac temperature 30°C, maximum outdoor 40°C, power consumption 3000 Wh
             dtype=np.float32
         )
 
-        # 動作空間: [0: 降低冷氣溫度, 1: 保持, 2: 增加冷氣溫度]
+        # Action space: [0: reduce ac temperature, 1: maintain, 2: increase ac temperature]
         self.action_space = spaces.Discrete(3)
 
-        # 初始化環境變數
-        self.T_ac = 25  # 初始溫度
-        self.current_index = 0  # 用來追蹤當前讀取到 CSV 的第幾筆數據
+        # Initialize environment variables
+        self.T_ac = 25  # Initial ac temperature
+        self.current_index = np.random.randint(0, 40000)  # 隨機起始點, To track the number of CSV data currently read
         self.T_outside = self.weather_data.iloc[self.current_index]["氣溫(℃)"]
-        self.energy_consumption = 0  # 初始能耗
+        self.energy_consumption = 0  # Initial energy consumption
 
-    # 計算 THI
+    # Calculate THI
     def calculate_THI(self, T, AH):
         Td = self.calculate_Td(T, AH)
         return T - 0.55 * (1 - np.exp((17.269 * Td) / (Td + 237.3)) / np.exp((17.269 * T) / (T + 237.3))) * (T - 14)
 
-    # 計算耗電量
+    # Calculate the indoor dew point temperature Td
+    def calculate_Td(self, T, AH):
+        RH = self.absolute_to_relative_humidity(T, AH)
+        return T * RH / 100
+
+    # Calculate power consumption
     def calculate_power_consumption(self, T_out, T_ac, Cooling_capacity=200):
         """ 當室外溫度小於冷氣溫度時冷氣關閉耗電量 0 """
         return Cooling_capacity * (T_out - T_ac) / T_ac if T_out > T_ac else 0
@@ -45,43 +51,38 @@ class AirConditioningEnv(gym.Env):
     def normalize(self, value, min_val, max_val):
         return (value - min_val) / (max_val - min_val)
 
-    # 計算絕對溼度轉相對濕度
+    # Calculate absolute to relative humidity
     def absolute_to_relative_humidity(self, T, AH):
         """
-        由絕對濕度 AH (g/m³) 和氣溫 T (°C) 計算相對濕度 RH (%)
+        From absolute humidity AH(g/m³) and temperature T(°C) to calculate relative humidity RH(%)
         "New Equations for Computing Vapor Pressure and Enhancement Factor(Arden L. Buck)"
         eq: a * exp(b*T / (T+c))
-        1. a 為水在不同溫度時的飽和蒸汽壓
-        2. b and c 是經驗係數
+        1. a is the saturated vapor pressure of water at different temperatures
+        2. b and c is the empirical coefficient
         3. b and c use temperature inerval 0 ~ 50
-        4. 217 是 Mw 水的摩爾質量(18.015 g/mol)的修正
+        4. 217 is Correction of molar mass of water(Mw=18.015 g/mol)
         5. T + 273.15 is ℃ to K
         """
-        # 計算飽和水蒸氣壓力（hPa）
+        # Calculate the Saturated water vapor pressure(hPa)
         Es = 6.1121 * np.exp((17.368 * T) / (T + 238.88))
-        # 計算實際水蒸氣壓力（hPa）
+        # Calculating the Actual water vapor pressure(hPa)
         Ea = (AH * (T + 273.15)) / 217
-        # 計算相對濕度（%）
+        # Calculating relative humidity(%)
         RH = ((Ea / Es) * 100).round(3)
         return RH
 
-    # 計算 室內露點溫度 Td
-    def calculate_Td(self, T, AH):
-        RH = self.absolute_to_relative_humidity(T, AH)
-        return T * RH / 100
+    # Calculate Reward
+    def calculate_reward(self, AH, T_out, T_ac, a=1, b=0.1, THI_optimal=23, THI_min=0, THI_max=35, Power_min=0, Power_max=3000):
 
-    # 計算 Reward
-    def calculate_reward(self, T_out, T_ac, a=1, b=0.1, THI_optimal=23, THI_min=0, THI_max=35, Power_min=0, Power_max=3000):
-        
-        THI = self.calculate_THI(T_ac, self.AH)
+        THI = self.calculate_THI(T_ac, AH)
         PowerConsumption = self.calculate_power_consumption(T_out, T_ac)
-        
-        # 正規化
+
+        # normalize
         THI_norm = self.normalize(THI, THI_min, THI_max)
         Power_norm = self.normalize(PowerConsumption, Power_min, Power_max)
         THI_optimal_norm = self.normalize(THI_optimal, THI_min, THI_max)
 
-        # 計算 Reward
+        # Calculate Reward
         reward = - a * abs(THI_norm - THI_optimal_norm) - b * Power_norm
         return reward, THI, PowerConsumption
 
@@ -102,29 +103,36 @@ class AirConditioningEnv(gym.Env):
         # 室內溫度變化，假設為一小時以內會達到冷氣溫度(簡化計算)
 
         # 計算回報
-        reward, THI, PowerConsumption = self.calculate_reward(self.T_outside, self.T_ac)
+        reward, THI, PowerConsumption = self.calculate_reward(AH, self.T_outside, self.T_ac)
 
         # 計算耗電量
         self.energy_consumption += PowerConsumption
-        
-        # 環境終止條件 self.energy_consumption > 3000 or
+
+        # 環境自然終止條件 self.energy_consumption > 3000 or
         done = self.current_index >= len(self.weather_data)
 
         # 回傳新的狀態
         state = np.array([self.T_ac, self.T_outside, self.energy_consumption], dtype=np.float32)
 
-        return state, reward, done, {}
+        info = {"THI": THI, "power": PowerConsumption}
 
-    def reset(self):
+        return state, reward, done, info
+
+    def reset(self, seed=None, options=None, return_info=False):
         """ 重設環境並從第一筆天氣數據開始 """
+        if seed is not None:
+          # 設定 numpy 隨機種子，你也可以根據需要設定其他隨機數生成器
+          np.random.seed(seed)
         self.T_ac = 25
         self.energy_consumption = 0
-        self.current_index = 0  # 重新從 CSV 第一筆數據開始
+        self.current_index = np.random.randint(0, 40000)
         self.T_outside = self.weather_data.iloc[self.current_index]["氣溫(℃)"]
-        self.AH = self.weather_data.iloc[self.current_index]["AH(g/m³)"]
-        # 回傳初始狀態 (室內溫度, 室外溫度, 累計耗電)
-        return np.array([self.T_ac, self.T_outside, self.energy_consumption], dtype=np.float32)
 
+        # 回傳初始狀態 (室內溫度, 室外溫度, 累計耗電)
+        state = np.array([self.T_ac, self.T_outside, self.energy_consumption], dtype=np.float32)
+        if return_info:
+            return state, {}  # 回傳一個空的 info 字典，或是你想要的其他資訊
+        return state
 
     def render(self, mode="human"):
         """ 可選的環境視覺化方法 """
