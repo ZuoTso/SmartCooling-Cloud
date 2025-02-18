@@ -18,8 +18,8 @@ class AirConditioningEnv(gym.Env):
 
         # State space: indoor temperature, outdoor temperature, power consumption
         self.observation_space = spaces.Box(
-            low=np.array([16, -1, 0], dtype=np.float32),  # Minimum ac temperature 16°C, outdoor minimum -1°C, minimum power consumption 0
-            high=np.array([30, 40, 3000], dtype=np.float32),  # Maximum ac temperature 30°C, maximum outdoor 40°C, power consumption 3000 Wh
+            low=np.array([16, -1, 0, 0], dtype=np.float32),  # Minimum ac temperature 16°C, outdoor -1°C, power consumption 0, THI 0
+            high=np.array([30, 40, 3000, 50], dtype=np.float32),  # Maximum ac temperature 30°C, outdoor 40°C, power consumption 3000 Wh, THI 50
             dtype=np.float32
         )
 
@@ -28,7 +28,7 @@ class AirConditioningEnv(gym.Env):
 
         # Initialize environment variables
         self.T_ac = 25  # Initial ac temperature
-        self.current_index = np.random.randint(0, 40000)  # 隨機起始點, To track the number of CSV data currently read
+        self.current_index = np.random.randint(0, 40000)  # Random starting point, To track the number of CSV data currently read
         self.T_outside = self.weather_data.iloc[self.current_index]["氣溫(℃)"]
         self.energy_consumption = 0  # Initial energy consumption
 
@@ -44,7 +44,11 @@ class AirConditioningEnv(gym.Env):
 
     # Calculate power consumption
     def calculate_power_consumption(self, T_out, T_ac, Cooling_capacity=200):
-        """ 當室外溫度小於冷氣溫度時冷氣關閉耗電量 0 """
+        """
+        When the outdoor temperature is lower than the air conditioning temperature,
+        the air conditioning is turned off,
+        and the power consumption : 0
+        """
         return Cooling_capacity * (T_out - T_ac) / T_ac if T_out > T_ac else 0
 
     # Min-Max Normalization
@@ -73,7 +77,21 @@ class AirConditioningEnv(gym.Env):
 
     # Calculate Reward
     def calculate_reward(self, AH, T_out, T_ac, a=1, b=0.1, THI_optimal=23, THI_min=0, THI_max=35, Power_min=0, Power_max=3000):
+        """
+        1. a and b are weight coefficients that tend to optimize power consumption or comfort(THI)
+        2. THI table
+          -----------
+          <10 | verycold
+          10-15 | cold
+          16-19 | a little cold
+          20-26 | comfortable
+          27-30 | hot
+          >30 | very hot
+          -----------
+        3. When indoor comfort is close to ideal and power consumption is low,
+          the overall negative reward becomes smaller (i.e., better performance)
 
+        """
         THI = self.calculate_THI(T_ac, AH)
         PowerConsumption = self.calculate_power_consumption(T_out, T_ac)
 
@@ -88,52 +106,52 @@ class AirConditioningEnv(gym.Env):
 
 
     def step(self, action):
-        """ 根據動作更新環境並計算回報 """
-        # 取得對應時間的外部溫度 & 絕對濕度
+        """ Update the environment based on the action and calculate the reward """
+        # Get the CSV external temperature and absolute humidity at the corresponding time
         self.T_outside = self.weather_data.iloc[self.current_index]["氣溫(℃)"]
         AH = self.weather_data.iloc[self.current_index]["AH(g/m³)"]
-        self.current_index += 1  # 更新索引，進入下一個時間點
+        self.current_index += 1  # Update the index and enter the next hour
 
-        # 動作影響冷氣溫度
-        if action == 0:  # 降低冷氣溫度
+        # Movement affects ac temperature
+        if action == 0:  # Lower the ac temperature
             self.T_ac = max(16, self.T_ac - 1)
-        elif action == 2:  # 增加冷氣溫度
+        elif action == 2:  # Increase ac temperature
             self.T_ac = min(30, self.T_ac + 1)
 
-        # 室內溫度變化，假設為一小時以內會達到冷氣溫度(簡化計算)
+        # Indoor temperature changes, assuming that it will reach the cooling temperature within one hour (simplified calculation)
 
-        # 計算回報
+        # Calculating reward
         reward, THI, PowerConsumption = self.calculate_reward(AH, self.T_outside, self.T_ac)
 
-        # 計算耗電量
+        # Calculate power consumption
         self.energy_consumption += PowerConsumption
 
-        # 環境自然終止條件 self.energy_consumption > 3000 or
+        # Environmental natural termination conditions self.energy_consumption > 3000 or
         done = self.current_index >= len(self.weather_data)
 
-        # 回傳新的狀態
-        state = np.array([self.T_ac, self.T_outside, self.energy_consumption], dtype=np.float32)
+        # New state
+        state = np.array([self.T_ac, self.T_outside, self.energy_consumption, THI], dtype=np.float32)
 
         info = {"THI": THI, "power": PowerConsumption}
 
         return state, reward, done, info
 
     def reset(self, seed=None, options=None, return_info=False):
-        """ 重設環境並從第一筆天氣數據開始 """
         if seed is not None:
-          # 設定 numpy 隨機種子，你也可以根據需要設定其他隨機數生成器
+          # Set numpy random seed
           np.random.seed(seed)
         self.T_ac = 25
         self.energy_consumption = 0
         self.current_index = np.random.randint(0, 40000)
         self.T_outside = self.weather_data.iloc[self.current_index]["氣溫(℃)"]
+        THI = 23
 
-        # 回傳初始狀態 (室內溫度, 室外溫度, 累計耗電)
-        state = np.array([self.T_ac, self.T_outside, self.energy_consumption], dtype=np.float32)
+        # Return initial status
+        state = np.array([self.T_ac, self.T_outside, self.energy_consumption, THI], dtype=np.float32)
         if return_info:
-            return state, {}  # 回傳一個空的 info 字典，或是你想要的其他資訊
+            return state, {}
         return state
 
     def render(self, mode="human"):
-        """ 可選的環境視覺化方法 """
+        """ Alternative methods of visualizing the environment """
         print(f"Outside Temp: {self.T_outside:.2f}°C, AC Temp: {self.T_ac}, Energy: {self.energy_consumption:.2f} Wh")
