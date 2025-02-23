@@ -61,5 +61,8 @@ def calculate_absolute_humidity(df):
     return df
 
 df = columns_extract(columns_to_extract)
+df = df.dropna().replace('X', np.nan).dropna()
+df.to_csv("0223data.csv", index=False)
 df = calculate_absolute_humidity(df)
-df.to_csv("training data.csv", index=False)
+df.to_csv("0223training data.csv", index=False)
+
