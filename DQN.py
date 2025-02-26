@@ -24,13 +24,61 @@ class DQN(nn.Module):
         return self.out(x)
 
 # ------------------------------
-# Defining the DQN Agent with Target Network
+# Prioritized Experience Replay Buffer
+# ------------------------------
+class PrioritizedReplayBuffer:
+    def __init__(self, capacity, alpha=0.6, beta=0.4, beta_increment=0.001, epsilon=1e-6):
+        self.capacity = capacity
+        self.buffer = []
+        self.pos = 0
+        # 儲存每個 transition 的優先權
+        self.priorities = np.zeros((capacity,), dtype=np.float32)
+        self.alpha = alpha  # 控制優先權的分布程度（0 等同均勻采樣）
+        self.beta = beta    # 用於 importance sampling 權重，隨訓練逐步提升
+        self.beta_increment = beta_increment
+        self.epsilon = epsilon  # 防止優先權為 0
+
+    def add(self, transition):
+        # 當前 buffer 不為空時，使用目前最大優先級，否則初始化為 1.0
+        max_priority = self.priorities.max() if self.buffer else 1.0
+        if len(self.buffer) < self.capacity:
+            self.buffer.append(transition)
+        else:
+            self.buffer[self.pos] = transition
+        self.priorities[self.pos] = max_priority
+        self.pos = (self.pos + 1) % self.capacity
+
+    def sample(self, batch_size):
+        if len(self.buffer) == self.capacity:
+            prios = self.priorities
+        else:
+            prios = self.priorities[:len(self.buffer)]
+        # 計算各筆 transition 的抽樣機率
+        probs = prios ** self.alpha
+        probs /= probs.sum()
+
+        indices = np.random.choice(len(self.buffer), batch_size, p=probs)
+        samples = [self.buffer[i] for i in indices]
+        # 更新 beta，逐步趨近 1
+        self.beta = np.min([1.0, self.beta + self.beta_increment])
+        # 計算 importance sampling weights
+        total = len(self.buffer)
+        weights = (total * probs[indices]) ** (-self.beta)
+        weights /= weights.max()  # 歸一化
+        return samples, indices, weights
+
+    def update_priorities(self, indices, priorities):
+        for idx, priority in zip(indices, priorities):
+            self.priorities[idx] = priority + self.epsilon
+
+# ------------------------------
+# Defining the DQN Agent with Target Network and Prioritized Experience Replay
 # ------------------------------
 class DQNAgent:
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=7000)
+        self.memory = PrioritizedReplayBuffer(capacity=7000)
         self.gamma = 0.95
         self.epsilon = 1.0
         self.epsilon_min = 0.01
@@ -49,10 +97,10 @@ class DQNAgent:
         self.target_model.eval()  # 目標網絡不需要反向傳播
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=1e-4)
-        self.loss_fn = nn.MSELoss()
+        self.loss_fn = nn.MSELoss(reduction='none')  # 使用不取平均以便後續加權
 
     def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done))
+        self.memory.add((state, action, reward, next_state, done))
 
     def act(self, state):
         if np.random.rand() <= self.epsilon:
@@ -63,68 +111,54 @@ class DQNAgent:
         return torch.argmax(q_values).item()
 
     def replay(self, batch_size):
-        if len(self.memory) < batch_size:
+        if len(self.memory.buffer) < batch_size:
             return
 
-        minibatch = random.sample(self.memory, batch_size)
-        states = []
-        targets = []
+        # 從 PrioritizedReplayBuffer 中抽樣
+        minibatch, indices, is_weights = self.memory.sample(batch_size)
+        # 將 batch 中的資料拆解
+        states = np.vstack([transition[0] for transition in minibatch])
+        actions = np.array([transition[1] for transition in minibatch])
+        rewards = np.array([transition[2] for transition in minibatch])
+        next_states = np.vstack([transition[3] for transition in minibatch])
+        dones = np.array([transition[4] for transition in minibatch]).astype(np.float32)
 
-        for state, action, reward, next_state, done in minibatch:
-            state_tensor = torch.FloatTensor(state).to(self.device)
-            next_state_tensor = torch.FloatTensor(next_state).to(self.device)
+        states_tensor = torch.FloatTensor(states).to(self.device)
+        next_states_tensor = torch.FloatTensor(next_states).to(self.device)
+        actions_tensor = torch.LongTensor(actions).unsqueeze(1).to(self.device)
+        rewards_tensor = torch.FloatTensor(rewards).to(self.device)
+        dones_tensor = torch.FloatTensor(dones).to(self.device)
+        is_weights_tensor = torch.FloatTensor(is_weights).to(self.device)
 
-            # 計算目標值 (使用 target_model)
-            target = reward
-            if not done:
-                with torch.no_grad():
-                    next_q = self.target_model(next_state_tensor)  # 使用 Target Network
-                    target = reward + self.gamma * torch.max(next_q).item()
+        # 當前 Q 值：從主網絡取出採取動作的 Q 值
+        current_q = self.model(states_tensor).gather(1, actions_tensor).squeeze(1)
+        # 計算 target Q 值：從 target 網絡獲取下一狀態的最大 Q 值
+        with torch.no_grad():
+            next_q = self.target_model(next_states_tensor).max(1)[0]
+        target_q = rewards_tensor + self.gamma * next_q * (1 - dones_tensor)
 
-            # 更新 Q 值
-            q_val = self.model(state_tensor)
-            target_f = q_val.clone().detach()
-            target_f[0, action] = target
-
-            states.append(state_tensor)
-            targets.append(target_f)
-
-        # 組成 batch 更新
-        states = torch.cat(states, dim=0)
-        targets = torch.cat(targets, dim=0)
+        # 計算 TD 誤差，並利用 importance sampling 權重加權損失
+        td_errors = current_q - target_q
+        loss = (is_weights_tensor * self.loss_fn(current_q, target_q)).mean()
 
         self.optimizer.zero_grad()
-        predictions = self.model(states)
-        loss = self.loss_fn(predictions, targets)
         with torch.autograd.detect_anomaly():
-          loss.backward()
-
+            loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-
-        # # 觀察各參數的梯度統計資訊
-        # for name, param in self.model.named_parameters():
-        #     if param.grad is not None:
-        #         grad_mean = param.grad.mean().item()
-        #         grad_max = param.grad.max().item()
-        #         grad_min = param.grad.min().item()
-        #         # print(f"{name} grad - mean: {grad_mean:.6f}, max: {grad_max:.6f}, min: {grad_min:.6f}")
-        #         # 檢查是否出現 NaN
-        #         if torch.isnan(param.grad).any():
-        #             print(f"NaN detected in gradients of {name}!")
-
-        # torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
 
-        # 每 `update_target_every` 步更新 Target Network
+        # 更新每筆 transition 的優先級 (以 |TD error| 作為依據)
+        new_priorities = np.abs(td_errors.detach().cpu().numpy())
+        self.memory.update_priorities(indices, new_priorities)
+
         self.step_count += 1
         if self.step_count % self.update_target_every == 0:
             self.target_model.load_state_dict(self.model.state_dict())
 
-        # 逐步降低 ε
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
-        return loss.item()  # 回傳 loss
+        return loss.item()
 
 # ------------------------------
 # Main: training loop
@@ -133,7 +167,7 @@ import matplotlib.pyplot as plt
 if __name__ == "__main__":
 
     csv_path = "training data.csv"
-    episode_length = 672 # Set one episode per day(24), week(168), two weeks(336), three weeks(504), four weeks(672) as needed
+    episode_length = 504 # Set one episode per day(24), week(168), two weeks(336), three weeks(504), four weeks(672) as needed
     env = ac_env.AirConditioningEnv(csv_path, episode_length=episode_length)
     env = NormalizeObservation(env)
 
@@ -163,16 +197,16 @@ if __name__ == "__main__":
 
         for time in range(episode_length):
             action = agent.act(state)
-            next_state, reward, done, _ = env.step(action)
+            next_state, reward, done, info = env.step(action)
             cumulative_reward += reward
 
             # |THI - 23|
-            current_THI = _["THI"]
+            current_THI = info["THI"]
             THI_deviation = abs(current_THI - 23)
             THI_deviations.append(THI_deviation)
 
             # Calculate instantaneous energy consumption
-            current_energy = _["energy"]
+            current_energy = info["energy"]
             instantaneous_power = current_energy - prev_energy
             instantaneous_powers.append(instantaneous_power)
             prev_energy = current_energy
@@ -186,10 +220,9 @@ if __name__ == "__main__":
 
             if done:
                 break
-            if len(agent.memory) >= batch_size:
-                loss = agent.replay(batch_size)
-                if loss is not None:
-                    episode_losses.append(loss)
+            loss = agent.replay(batch_size)
+            if loss is not None:
+                episode_losses.append(loss)
 
         # Calculate the average THI deviation for this round
         avg_THI_deviation = np.mean(THI_deviations) if THI_deviations else 0
@@ -207,7 +240,7 @@ if __name__ == "__main__":
         cumulative_rewards.append(cumulative_reward)
         print(f"Episode:{e+1:>4}/{episodes:<4}, Avg Loss: {avg_loss:.4f}, Cumulative Reward: {cumulative_reward:>10.4f}, "
           f"Avg |THI-23|: {avg_THI_deviation:.4f}, Avg Power: {avg_power_consumption:.4f}, Peak Power: {peak_power_consumption:.4f}")
-        
+
 import matplotlib.pyplot as plt
 
 plt.figure(figsize=(10, 5))
@@ -218,20 +251,20 @@ plt.title('Training Loss Curve')
 plt.legend()
 plt.show()
 
+plt.figure(figsize=(10, 5))
+plt.plot(range(1, episodes+1), avg_THI_deviation_per_episode, label='Average |THI-23| per Episode')
+plt.xlabel('Episode')
+plt.ylabel('Average |THI-23|')
+plt.title('Average |THI-23| Curve')
+plt.legend()
+plt.show()
+
 # Plot Cumulative Reward Curve
 plt.figure(figsize=(10, 5))
 plt.plot(range(1, episodes+1), cumulative_rewards, label='Cumulative Reward per Episode')
 plt.xlabel('Episode')
 plt.ylabel('Cumulative Reward')
 plt.title('Cumulative Reward Curve')
-plt.legend()
-plt.show()
-
-plt.figure(figsize=(10, 5))
-plt.plot(range(1, episodes+1), avg_THI_deviation_per_episode, label='Average |THI-23| per Episode')
-plt.xlabel('Episode')
-plt.ylabel('Average |THI-23|')
-plt.title('Average |THI-23| Curve')
 plt.legend()
 plt.show()
 

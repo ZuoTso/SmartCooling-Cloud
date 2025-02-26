@@ -90,47 +90,32 @@ class AirConditioningEnv(gym.Env):
         return RH
 
     # Calculate Reward
-    def calculate_reward(self, AH, T_out, T_in, a=0.9, b=0.1, THI_optimal=23, THI_min=0, THI_max=35, Power_min=0, Power_max=3, k=10):
+    def calculate_reward(self, AH, T_out, T_in, a=1, b=0, k=3, THI_optimal=23, Power_min=0, Power_max=3):
         """
-        1. a and b are weight coefficients that tend to optimize power consumption or comfort(THI)
-        2. THI table
-          -----------
-          <10 | verycold
-          10-15 | cold
-          16-19 | a little cold
-          20-26 | comfortable
-          27-30 | hot
-          >30 | very hot
-          -----------
-        3. When indoor comfort is close to ideal and power consumption is low,
-          the overall negative reward becomes smaller (i.e., better performance)
-        4. Basic THI penalty, using a logarithmic function: the larger the deviation, the heavier the penalty (the lower the reward value)
-        5. Use sigmoid to generate extra rewards in the range of 20~26,
-          the coefficient is adjustable (here 0.3 is the maximum bonus).
-          Additional bonus in the range of 22~24 (here 0.2 is the maximum additional bonus)
-
+        修改後的 calculate_reward：
+          1. 利用 self.calculate_THI(T_in, AH) 計算 THI
+          2. 計算 PowerConsumption 及其正規化值 Power_norm
+          3. 利用 smooth_reward 函數計算 THI_reward，其中：
+            - THI < 10 或 THI > 30 時，reward = 0
+            - THI 在 10～15 或 27～30 時，reward = 0.05
+            - THI 在 15～19 時，reward = 0.1
+            - THI 在 19～22 或 24～27 時，reward = 0.6
+            - THI 在 22～24 時，reward = 1
+            此函數利用多個 sigmoid 函數在臨界點處平滑過渡
+          4. 最終 reward = a * THI_reward - b * Power_norm
         """
         THI = self.calculate_THI(T_in, AH)
         PowerConsumption = self.calculate_power_consumption(T_out, T_in)
-
-        # normalize
         Power_norm = self.normalize(PowerConsumption, Power_min, Power_max)
 
-        # Basic THI penalty
-        base_reward = -math.log(1 + abs(THI - THI_optimal))
+        # 定義平滑的 THI reward 函數
+        def smooth_reward(THI, k=10):
+            def S(t):
+                return 1 / (1 + np.exp(-k * (THI - t)))
+            return (0.05 * S(10) + 0.05 * S(15) + 0.5 * S(19) + 0.4 * S(22) - 0.4 * S(24) - 0.55 * S(27) - 0.05 * S(30)) - 1
 
-        # Define the sigmoid function to smooth the transition
-        def sigmoid(x):
-            return 1 / (1 + math.exp(-x))
+        THI_reward = smooth_reward(THI, k)
 
-        bonus_range = 0.1 * (sigmoid(k * (THI - 20)) - sigmoid(k * (THI - 26)))
-        extra_bonus = 0.6 * (sigmoid(k * (THI - 22)) - sigmoid(k * (THI - 24)))
-
-        bonus = bonus_range + extra_bonus
-
-        THI_reward = base_reward + bonus
-
-        # Calculate Reward
         reward = a * THI_reward - b * Power_norm
         return reward, THI, PowerConsumption
 
