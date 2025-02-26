@@ -5,9 +5,11 @@ import pandas as pd
 import math
 
 class AirConditioningEnv(gym.Env):
-    def __init__(self, csv_path, render_mode=None):
+    def __init__(self, csv_path, episode_length=168, render_mode=None):
         super(AirConditioningEnv, self).__init__()
         self.render_mode = render_mode
+        self.episode_length = episode_length  # The number of steps per episode (e.g. 24 for one day)
+        self.step_counter = 0
 
         # read CSV
         self.weather_data = pd.read_csv(csv_path)
@@ -22,7 +24,7 @@ class AirConditioningEnv(gym.Env):
             # Minimum ac temperature 16°C, outdoor -1°C, power consumption 0 kWh, THI 0, indoor -1°C
             low=np.array([16, -1, 0, 0, -1], dtype=np.float32),
             # Maximum ac temperature 30°C, outdoor 40°C, power consumption 3 kWh, THI 35, indoor 40°C
-            high=np.array([30, 40, 3, 50, 40], dtype=np.float32),
+            high=np.array([30, 40, 3, 35, 40], dtype=np.float32),
             dtype=np.float32
         )
 
@@ -31,7 +33,7 @@ class AirConditioningEnv(gym.Env):
 
         # Initialize environment variables
         self.T_ac = 25  # Initial ac temperature
-        self.current_index = np.random.randint(0, 46859)  # Random starting point, To track the number of CSV data currently read
+        self.current_index = np.random.randint(0, len(self.weather_data) - self.episode_length) # Random starting point, To track the number of CSV data currently read
         self.T_outside = self.weather_data.iloc[self.current_index]["氣溫(℃)"]
         self.T_in = self.T_outside  # Initial indoor temperature is the same as the outside temperature
         self.energy_consumption = 0  # Initial energy consumption
@@ -88,7 +90,7 @@ class AirConditioningEnv(gym.Env):
         return RH
 
     # Calculate Reward
-    def calculate_reward(self, AH, T_out, T_in, a=0.9, b=0.1, THI_optimal=23, THI_min=0, THI_max=35, Power_min=0, Power_max=3, k=5):
+    def calculate_reward(self, AH, T_out, T_in, a=0.9, b=0.1, THI_optimal=23, THI_min=0, THI_max=35, Power_min=0, Power_max=3, k=10):
         """
         1. a and b are weight coefficients that tend to optimize power consumption or comfort(THI)
         2. THI table
@@ -121,8 +123,8 @@ class AirConditioningEnv(gym.Env):
         def sigmoid(x):
             return 1 / (1 + math.exp(-x))
 
-        bonus_range = 0.3 * (sigmoid(k * (THI - 20)) - sigmoid(k * (THI - 26)))
-        extra_bonus = 0.2 * (sigmoid(k * (THI - 22)) - sigmoid(k * (THI - 24)))
+        bonus_range = 0.1 * (sigmoid(k * (THI - 20)) - sigmoid(k * (THI - 26)))
+        extra_bonus = 0.6 * (sigmoid(k * (THI - 22)) - sigmoid(k * (THI - 24)))
 
         bonus = bonus_range + extra_bonus
 
@@ -139,6 +141,7 @@ class AirConditioningEnv(gym.Env):
         self.T_outside = self.weather_data.iloc[self.current_index]["氣溫(℃)"]
         AH = self.weather_data.iloc[self.current_index]["AH(g/m³)"]
         self.current_index += 1  # Update the index and enter the next hour
+        self.step_counter += 1
 
         # Movement affects ac temperature
         if action == 0:  # Lower the ac temperature
@@ -158,8 +161,8 @@ class AirConditioningEnv(gym.Env):
         # Calculate power consumption
         self.energy_consumption += PowerConsumption
 
-        # Environmental natural termination conditions self.energy_consumption > 3000 or
-        done = self.current_index >= len(self.weather_data)
+        # Environmental natural termination conditions
+        done = self.step_counter >= self.episode_length or self.current_index >= len(self.weather_data)
 
         # New state
         state = np.array([self.T_ac, self.T_outside, PowerConsumption, THI, self.T_in], dtype=np.float32)
@@ -175,7 +178,8 @@ class AirConditioningEnv(gym.Env):
         self.T_ac = 25
         self.energy_consumption = 0
         PowerConsumption = 0
-        self.current_index = np.random.randint(0, 46859)
+        self.step_counter = 0
+        self.current_index = np.random.randint(0, len(self.weather_data) - self.episode_length)
         self.T_outside = self.weather_data.iloc[self.current_index]["氣溫(℃)"]
         AH = self.weather_data.iloc[self.current_index]["AH(g/m³)"]
 
