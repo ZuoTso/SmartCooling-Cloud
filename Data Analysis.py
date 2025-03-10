@@ -10,7 +10,7 @@ def calculate_THI(df):
     df["THI"] = THI.round(2)
     return df
 
-csv_path = "training data.csv"
+csv_path = "training data/training data.csv"
 df = pd.read_csv(csv_path)
 df = calculate_THI(df)
 print(max(df["THI"]))

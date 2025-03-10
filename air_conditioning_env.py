@@ -3,6 +3,9 @@ from gym import spaces
 import numpy as np
 import pandas as pd
 import math
+import psychrolib
+
+psychrolib.SetUnitSystem(psychrolib.SI)
 
 class AirConditioningEnv(gym.Env):
     def __init__(self, csv_path, episode_length=168, render_mode=None):
@@ -41,7 +44,10 @@ class AirConditioningEnv(gym.Env):
 
     # Calculate THI
     def calculate_THI(self, T, AH):
-        RH = self.absolute_to_relative_humidity(T, AH)
+        RH = self.absolute_to_relative_humidity(T, AH) / 100
+        # If RH is outside the range [0,1], it is truncated to a reasonable range.
+        if RH < 0 or RH > 1:
+            RH = np.clip(RH, 0, 1)
         Td = psychrolib.GetTDewPointFromRelHum(T, RH)
         THI = T - 0.55 * (1 - np.exp((17.269 * Td) / (Td + 237.3)) / np.exp((17.269 * T) / (T + 237.3))) * (T - 14)
         if np.isnan(THI):
@@ -138,7 +144,7 @@ class AirConditioningEnv(gym.Env):
             self.T_in = self.T_outside  # ac is off, indoor temperature equals outdoor temperature
 
         # Calculating reward
-        reward, THI, PowerConsumption = self.calculate_reward(AH, self.T_outside, self.T_in)
+        reward, THI, PowerConsumption = self.calculate_reward(AH, self.T_outside, self.T_in, a=1, b=0)
 
         # Calculate power consumption
         self.energy_consumption += PowerConsumption

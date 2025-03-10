@@ -19,7 +19,7 @@ def fix_hour(time_str):
     else:
         return time_str
 
-csv_file = "training data.csv"
+csv_file = "training data/training data.csv"
 df = pd.read_csv(csv_file)
 
 # 先處理「觀測時間(hour)」欄位：移除空白並處理可能的 "24" 小時問題
@@ -41,17 +41,20 @@ mask_2_6    = df["month"].isin([2, 3, 4, 5, 6])
 mask_7_9    = df["month"].isin([7, 8, 9])
 mask_10_11  = df["month"].isin([10, 11])
 mask_12_1   = df["month"].isin([12, 1])
+mask_2_11   = df["month"].isin([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
 
 # 分別篩選各區間的資料
 df_2_6   = df[mask_2_6]
 df_7_9   = df[mask_7_9]
 df_10_11 = df[mask_10_11]
 df_12_1  = df[mask_12_1]
+df_2_11  = df[mask_2_11]
 
 # 儲存成不同的 CSV 檔案
 df_2_6.to_csv("training_data_2_6.csv", index=False)
 df_7_9.to_csv("training_data_7_9.csv", index=False)
 df_10_11.to_csv("training_data_10_11.csv", index=False)
 df_12_1.to_csv("training_data_12_1.csv", index=False)
+df_2_11.to_csv("training_data_2_11.csv", index=False)
 
 print("資料已依照月份區間拆分成四個 CSV 檔案。")

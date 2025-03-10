@@ -28,18 +28,18 @@ class DQN(nn.Module):
 # ------------------------------
 class PrioritizedReplayBuffer:
     def __init__(self, capacity, alpha=0.6, beta=0.4, beta_increment=0.001, epsilon=1e-6):
-        self.capacity = capacity
+        self.capacity = int(capacity)
         self.buffer = []
         self.pos = 0
-        # 儲存每個 transition 的優先權
-        self.priorities = np.zeros((capacity,), dtype=np.float32)
-        self.alpha = alpha  # 控制優先權的分布程度（0 等同均勻采樣）
-        self.beta = beta    # 用於 importance sampling 權重，隨訓練逐步提升
+        # Stores the priority of each transition
+        self.priorities = np.zeros((self.capacity,), dtype=np.float32)
+        self.alpha = alpha  # Controls how the priorities are distributed (0 equals uniform sampling)
+        self.beta = beta    # Used for importance sampling weights, which are gradually increased with training
         self.beta_increment = beta_increment
-        self.epsilon = epsilon  # 防止優先權為 0
+        self.epsilon = epsilon  # Prevent priority from being 0
 
     def add(self, transition):
-        # 當前 buffer 不為空時，使用目前最大優先級，否則初始化為 1.0
+        # When the current buffer is not empty, use the current maximum priority, otherwise initialize to 1.0
         max_priority = self.priorities.max() if self.buffer else 1.0
         if len(self.buffer) < self.capacity:
             self.buffer.append(transition)
@@ -53,18 +53,18 @@ class PrioritizedReplayBuffer:
             prios = self.priorities
         else:
             prios = self.priorities[:len(self.buffer)]
-        # 計算各筆 transition 的抽樣機率
+        # Calculate the sampling probability of each transition
         probs = prios ** self.alpha
         probs /= probs.sum()
 
         indices = np.random.choice(len(self.buffer), batch_size, p=probs)
         samples = [self.buffer[i] for i in indices]
-        # 更新 beta，逐步趨近 1
+        # Update beta, gradually approaching 1
         self.beta = np.min([1.0, self.beta + self.beta_increment])
-        # 計算 importance sampling weights
+        # Calculate importance sampling weights
         total = len(self.buffer)
         weights = (total * probs[indices]) ** (-self.beta)
-        weights /= weights.max()  # 歸一化
+        weights /= weights.max()
         return samples, indices, weights
 
     def update_priorities(self, indices, priorities):
@@ -78,26 +78,26 @@ class DQNAgent:
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = PrioritizedReplayBuffer(capacity=7000)
+        self.memory = PrioritizedReplayBuffer(capacity=1e4)
         self.gamma = 0.95
         self.epsilon = 1.0
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.95
         self.learning_rate = 1e-6
-        self.update_target_every = 1000  # Target Network 每 1000 步更新一次
+        self.update_target_every = 1000  # Target Network is updated every 1000 steps
         self.step_count = 0
 
-        # 確保 GPU 可用
+        # Make sure the GPU is available
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # 建立主網絡 & 目標網絡
+        # Build the main network & target network
         self.model = DQN(state_size, action_size).to(self.device)
         self.target_model = DQN(state_size, action_size).to(self.device)
-        self.target_model.load_state_dict(self.model.state_dict())  # 初始化時同步權重
-        self.target_model.eval()  # 目標網絡不需要反向傳播
+        self.target_model.load_state_dict(self.model.state_dict())  # Synchronize weights at initialization
+        self.target_model.eval()  # The target network does not require backpropagation
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=1e-4)
-        self.loss_fn = nn.MSELoss(reduction='none')  # 使用不取平均以便後續加權
+        self.loss_fn = nn.MSELoss(reduction='none')  # Use no averaging for subsequent weighting
 
     def remember(self, state, action, reward, next_state, done):
         self.memory.add((state, action, reward, next_state, done))
@@ -114,9 +114,9 @@ class DQNAgent:
         if len(self.memory.buffer) < batch_size:
             return
 
-        # 從 PrioritizedReplayBuffer 中抽樣
+        # Sampling from PrioritizedReplayBuffer
         minibatch, indices, is_weights = self.memory.sample(batch_size)
-        # 將 batch 中的資料拆解
+        # Split the data in the batch
         states = np.vstack([transition[0] for transition in minibatch])
         actions = np.array([transition[1] for transition in minibatch])
         rewards = np.array([transition[2] for transition in minibatch])
@@ -130,14 +130,14 @@ class DQNAgent:
         dones_tensor = torch.FloatTensor(dones).to(self.device)
         is_weights_tensor = torch.FloatTensor(is_weights).to(self.device)
 
-        # 當前 Q 值：從主網絡取出採取動作的 Q 值
+        # Current Q value: The Q value of the action taken from the main network
         current_q = self.model(states_tensor).gather(1, actions_tensor).squeeze(1)
-        # 計算 target Q 值：從 target 網絡獲取下一狀態的最大 Q 值
+        # Calculate the target Q value: Get the maximum Q value of the next state from the target network
         with torch.no_grad():
             next_q = self.target_model(next_states_tensor).max(1)[0]
         target_q = rewards_tensor + self.gamma * next_q * (1 - dones_tensor)
 
-        # 計算 TD 誤差，並利用 importance sampling 權重加權損失
+        # Calculate TD error and weight the loss using importance sampling weights
         td_errors = current_q - target_q
         loss = (is_weights_tensor * self.loss_fn(current_q, target_q)).mean()
 
@@ -147,7 +147,7 @@ class DQNAgent:
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         self.optimizer.step()
 
-        # 更新每筆 transition 的優先級 (以 |TD error| 作為依據)
+        # Update each transition priority (based on |TD error|)
         new_priorities = np.abs(td_errors.detach().cpu().numpy())
         self.memory.update_priorities(indices, new_priorities)
 
@@ -166,7 +166,7 @@ class DQNAgent:
 import matplotlib.pyplot as plt
 if __name__ == "__main__":
 
-    csv_path = "training data.csv"
+    csv_path = "training_data_2_11.csv"
     episode_length = 504 # Set one episode per day(24), week(168), two weeks(336), three weeks(504), four weeks(672) as needed
     env = ac_env.AirConditioningEnv(csv_path, episode_length=episode_length)
     env = NormalizeObservation(env)
@@ -177,7 +177,7 @@ if __name__ == "__main__":
 
     agent = DQNAgent(state_size, action_size)
 
-    episodes = 200  # Total number of training rounds
+    episodes = 2000  # Total number of training rounds
     batch_size = 32
     losses_per_episode = []  # Used to record the average loss per round
     cumulative_rewards = []     # Record cumulative reward per episode
@@ -233,7 +233,7 @@ if __name__ == "__main__":
         peak_power_consumption = np.max(instantaneous_powers) if instantaneous_powers else 0
         avg_power_consumption_per_episode.append(avg_power_consumption)
         peak_power_consumption_per_episode.append(peak_power_consumption)
-        
+
         # Calculate the average loss of the current round
         avg_loss = np.mean(episode_losses) if episode_losses else 0
         losses_per_episode.append(avg_loss)
