@@ -111,7 +111,7 @@ class AirConditioningEnv(gym.Env):
         PowerConsumption = self.calculate_power_consumption(T_out, T_in)
         Power_norm = self.normalize(PowerConsumption, Power_min, Power_max)
 
-        # 定義平滑的 THI reward 函數
+        # Define a smooth THI reward function
         def smooth_reward(THI, k=10):
             def S(t):
                 return 1 / (1 + np.exp(-k * (THI - t)))
@@ -144,7 +144,7 @@ class AirConditioningEnv(gym.Env):
             self.T_in = self.T_outside  # ac is off, indoor temperature equals outdoor temperature
 
         # Calculating reward
-        reward, THI, PowerConsumption = self.calculate_reward(AH, self.T_outside, self.T_in, a=1, b=0)
+        reward, THI, PowerConsumption = self.calculate_reward(AH, self.T_outside, self.T_in, a=0.5, b=0.5)
 
         # Calculate power consumption
         self.energy_consumption += PowerConsumption
