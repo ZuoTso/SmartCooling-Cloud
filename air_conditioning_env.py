@@ -39,6 +39,7 @@ class AirConditioningEnv(gym.Env):
         # Random starting point, To track the number of CSV data currently read
         self.current_index = np.random.randint(0, len(self.weather_data) - self.episode_length)
         self.T_outside = self.weather_data.iloc[self.current_index]["氣溫(℃)"]
+        self.date = self.weather_data.iloc[self.current_index]["觀測時間(hour)"]
         self.T_in = self.T_outside  # Initial indoor temperature is the same as the outside temperature
         self.energy_consumption = 0
 
@@ -128,6 +129,7 @@ class AirConditioningEnv(gym.Env):
         # Get the CSV external temperature and absolute humidity at the corresponding time
         self.T_outside = self.weather_data.iloc[self.current_index]["氣溫(℃)"]
         AH = self.weather_data.iloc[self.current_index]["AH(g/m³)"]
+        self.date = self.weather_data.iloc[self.current_index]["觀測時間(hour)"]
         self.current_index += 1  # Update the index and enter the next hour
         self.step_counter += 1
 
@@ -155,7 +157,7 @@ class AirConditioningEnv(gym.Env):
         # New state
         state = np.array([self.T_ac, self.T_outside, PowerConsumption, THI, self.T_in], dtype=np.float32)
 
-        info = {"THI": THI, "energy": self.energy_consumption}
+        info = {"THI": THI, "energy": self.energy_consumption, "date": self.date}
 
         return state, reward, done, info
 

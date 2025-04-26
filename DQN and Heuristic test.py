@@ -1,13 +1,17 @@
-import matplotlib.pyplot as plt
 import numpy as np
+import torch
+import matplotlib.pyplot as plt
+from scipy import stats
+
+# 載入自訂環境與 DQN Agent 模組
 import air_conditioning_env as ac_env
-import statistics
+from DQN import DQNAgent
 
 test_data_path = "test data_2_11.csv"
 hours = 336
-seed = 999
-np.random.seed(seed)
-torch.manual_seed(seed)
+test_seed = 999
+np.random.seed(test_seed)
+torch.manual_seed(test_seed)
 agent.epsilon = 0  # 確保不探索
 
 # 建立兩個環境實例，分別用於 DQN agent 與 Heuristic 策略
@@ -61,7 +65,7 @@ def run_episode(env, policy_func, max_steps=hours):
     - 室外溫度（state[1]）
     """
     # 使用相同 seed 重置環境，確保起始點一致
-    state = env.reset(seed=seed)
+    state = env.reset(seed=test_seed)
     state = np.reshape(state, [1, env.observation_space.shape[0]])
     steps = []
     energies = []      # 累計耗電量
@@ -159,7 +163,7 @@ dqn_count_19_27 = sum(1 for val in dqn_THI if 19 <= val <= 27)
 dqn_prop_22_24 = dqn_count_22_24 / len(dqn_THI)
 dqn_prop_19_27 = dqn_count_19_27 / len(dqn_THI)
 
-print(f"start date: {dqn_dates[0]}")
+print(f"date: {dqn_dates[0]} ~ {dqn_dates[-1]}")
 print(f"{'heuristic ':.>10}總耗電量：{heuristic_energies[-1]:>5.3f} kWh")
 print(f"{'dqn ':>10}總耗電量：{dqn_energies[-1]:>5.3f} kWh")
 print("--------------------------")
