@@ -25,31 +25,26 @@ def heuristic_policy(state):
     """
     基於政府公家機關的策略：
     - 當室外溫度 > 28℃，期望室內設定為 27℃：
-         若目前室內溫度 > 27，採取 action 0 (降低)；
-         若 < 27，採取 action 2 (提高)；
+         若目前室內溫度 > 27，採取 action 2,3 (降低)；
+         若 < 27，採取 action 4,5 (提高)；
          等於 27 則維持 (action 1)。
-    - 當室外溫度 < 27℃，則關閉冷氣（目標設定溫度達到 30℃）：
-         若目前室內溫度 < 30，採取 action 2 (提高)；
-         否則維持 (action 1)。
+    - 當室外溫度 < 27℃，則關閉冷氣：
     - 其他情況則維持 (action 1)。
     """
-    T_in = state[0]    # 室內冷氣設定溫度
+    T_in = state[4]    # 室內溫度
     T_out = state[1]   # 室外溫度
     T_ac = 27       # 26~28℃
     if T_out > 28:
         if T_in > T_ac:
-            return 0  # 降低空調設定溫度
+            return 2  # 降低空調設定溫度
         elif T_in < T_ac:
-            return 2  # 提高空調設定溫度
+            return 4  # 提高空調設定溫度
         else:
             return 1  # 維持
     elif T_out < T_ac:
-        if T_in < 30:
-            return 2  # 提高至關閉冷氣（室內溫度達到 30℃）
-        else:
-            return 1  # 維持
+        return 0  # ac turn off
     else:
-        return 1  # 其他情況維持
+        return 0  # ac turn off
 
 def run_episode(env, policy_func, max_steps=hours):
     """

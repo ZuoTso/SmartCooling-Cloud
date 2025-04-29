@@ -31,8 +31,13 @@ class AirConditioningEnv(gym.Env):
             dtype=np.float32
         )
 
-        # Action space: [0: reduce ac temperature, 1: maintain, 2: increase ac temperature]
-        self.action_space = spaces.Discrete(3)
+        # Action space
+        """
+        0: maintain
+        1: reduce ac 1 temperature | 3: increase ac 1 temperature
+        2: reduce ac 2 temperature | 4: increase ac 2 temperature
+        """
+        self.action_space = spaces.Discrete(5)
 
         # Initialize environment variables
         self.T_ac = 25
@@ -63,12 +68,13 @@ class AirConditioningEnv(gym.Env):
         the air conditioning is turned off,
         and the power consumption : 0
         """
-        if T_in == 0:
-          return 0
         if T_out > T_in:
-          PowerConsumption = Cooling_capacity * (T_out - T_in) / T_in
+            if T_in != 0:
+                PowerConsumption = Cooling_capacity * (T_out - T_in) / T_in
+            else:
+                PowerConsumption = Cooling_capacity * (T_out - T_in) / 1
         else:
-          PowerConsumption = 0
+            PowerConsumption = 0
         return PowerConsumption
     # Min-Max Normalization
     def normalize(self, value, min_val, max_val):
@@ -134,10 +140,19 @@ class AirConditioningEnv(gym.Env):
         self.step_counter += 1
 
         # Movement affects ac temperature
-        if action == 0:  # Lower the ac temperature
+        """
+        0: maintain
+        1: reduce ac 1 temperature | 3: increase ac 1 temperature
+        2: reduce ac 2 temperature | 4: increase ac 2 temperature
+        """
+        if action == 1:
             self.T_ac = max(16, self.T_ac - 1)
-        elif action == 2:  # Increase ac temperature
+        elif action == 2:
+            self.T_ac = max(16, self.T_ac - 2)
+        elif action == 3:
             self.T_ac = min(30, self.T_ac + 1)
+        elif action == 4:
+            self.T_ac = min(30, self.T_ac + 2)
 
         # Determine the indoor temperature
         if self.T_ac < self.T_outside:
@@ -146,7 +161,7 @@ class AirConditioningEnv(gym.Env):
             self.T_in = self.T_outside  # ac is off, indoor temperature equals outdoor temperature
 
         # Calculating reward
-        reward, THI, PowerConsumption = self.calculate_reward(AH, self.T_outside, self.T_in, a=0.5, b=0.5)
+        reward, THI, PowerConsumption = self.calculate_reward(AH, self.T_outside, self.T_in, a=0.7, b=0.3)
 
         # Calculate power consumption
         self.energy_consumption += PowerConsumption
@@ -163,8 +178,8 @@ class AirConditioningEnv(gym.Env):
 
     def reset(self, seed=None, options=None, return_info=False):
         if seed is not None:
-          # Set numpy random seed
-          np.random.seed(seed)
+            # Set numpy random seed
+            np.random.seed(seed)
         self.T_ac = 25
         self.energy_consumption = 0
         PowerConsumption = 0
